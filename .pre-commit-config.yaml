@@ -1,0 +1,80 @@
+# Same chain as CI: ruff on staged files at commit, everything at push.
+# Install once: `uv run pre-commit install` (installs the three hook types below).
+default_install_hook_types: [pre-commit, commit-msg, pre-push]
+default_stages: [pre-commit]
+
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-toml
+      - id: check-merge-conflict
+      - id: check-added-large-files
+      - id: detect-private-key
+
+  - repo: https://github.com/compilerla/conventional-pre-commit
+    rev: v4.5.0
+    hooks:
+      - id: conventional-pre-commit
+        stages: [commit-msg]
+        args: [feat, fix, chore, refactor, docs, test, build, ci, perf, style, revert]
+
+  - repo: local
+    hooks:
+      # pre-commit: staged Python files only, fixed in place.
+      - id: ruff-check
+        name: ruff check
+        entry: uv run ruff check --fix
+        language: system
+        types: [python]
+      - id: ruff-format
+        name: ruff format
+        entry: uv run ruff format
+        language: system
+        types: [python]
+      - id: uv-lock
+        name: uv.lock is up to date
+        entry: uv lock --check
+        language: system
+        files: ^(pyproject\.toml|uv\.lock)$
+        pass_filenames: false
+
+      # pre-push: the whole chain, cheapest first, as in CI.
+      - id: check-lint
+        name: ruff (whole repo)
+        entry: uv run ruff check .
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [pre-push]
+      - id: check-format
+        name: ruff format --check
+        entry: uv run ruff format --check .
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [pre-push]
+      - id: check-types
+        name: mypy
+        entry: uv run mypy
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [pre-push]
+      - id: check-dead-code
+        name: vulture
+        entry: uv run vulture
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [pre-push]
+      - id: check-tests
+        name: pytest
+        entry: uv run pytest -q
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [pre-push]
