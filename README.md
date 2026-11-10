@@ -159,13 +159,14 @@ La fenêtre de déverrouillage est une fenêtre Windows Forms lancée par Window
 
 ### Statut des tests par système
 
-| | Tests automatiques (CI, avec le vrai `bw`) | Essai réel de bout en bout |
+| | Tests automatiques (avec le vrai `bw`) | Essai réel de bout en bout |
 | --- | --- | --- |
-| macOS | ✅ | ✅ fenêtre, déverrouillage, recherche dans un vrai coffre |
-| Linux | ✅ | ❌ pas encore : fenêtre zenity/kdialog à confirmer |
-| Windows | ✅ | ❌ pas encore : fenêtre PowerShell à confirmer |
+| macOS | ✅ en local ; CI `macos-latest` | ✅ fenêtre, déverrouillage, recherche dans un vrai coffre |
+| Linux | CI `ubuntu-latest` | ❌ pas encore : fenêtre zenity/kdialog à confirmer |
+| Windows | CI `windows-latest` | ❌ pas encore : fenêtre PowerShell à confirmer |
 
-Si tu fais l'essai sur Linux ou Windows, mets ce tableau à jour.
+Le résultat de la CI est visible dans l'onglet Actions du dépôt. Si tu fais l'essai réel sur
+Linux ou Windows, mets ce tableau à jour.
 
 ## Brancher sur Claude Code
 
