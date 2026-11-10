@@ -1,0 +1,28 @@
+[project]
+name = "vaultwarden-mcp"
+version = "0.1.0"
+description = "Add your description here"
+authors = [
+    { name = "Horace-BELOT", email = "85863077+Horace-BELOT@users.noreply.github.com" }
+]
+requires-python = ">=3.12"
+dependencies = [
+    "mcp>=1.30,<2",
+    "pydantic>=2",
+]
+
+[project.scripts]
+vaultwarden-mcp = "vaultwarden_mcp:main"
+
+[build-system]
+requires = ["uv_build>=0.13.7,<0.14.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "mypy>=2.4.1",
+    "pre-commit>=4.7.0",
+    "pytest>=9.2.0",
+    "ruff>=0.17.4",
+    "vulture>=2.16",
+]
