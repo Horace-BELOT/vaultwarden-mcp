@@ -1,18 +1,19 @@
 [project]
 name = "vaultwarden-mcp"
 version = "0.1.0"
-description = "Add your description here"
+description = "MCP server to search a Vaultwarden vault and write secrets to files with human approval, without exposing values to the model."
+readme = "README.md"
 authors = [
     { name = "Horace-BELOT", email = "85863077+Horace-BELOT@users.noreply.github.com" }
 ]
-requires-python = ">=3.12"
+requires-python = "==3.12.*"
 dependencies = [
     "mcp>=1.30,<2",
     "pydantic>=2",
 ]
 
 [project.scripts]
-vaultwarden-mcp = "vaultwarden_mcp:main"
+vaultwarden-mcp = "vaultwarden_mcp.__main__:main"
 
 [build-system]
 requires = ["uv_build>=0.13.7,<0.14.0"]
@@ -26,3 +27,29 @@ dev = [
     "ruff>=0.17.4",
     "vulture>=2.16",
 ]
+
+[tool.uv]
+required-version = ">=0.13.7,<0.14"
+
+[tool.ruff]
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "SIM", "RUF", "PL", "N"]
+ignore = ["PLR2004"]
+
+[tool.mypy]
+strict = true
+plugins = ["pydantic.mypy"]
+files = ["src", "tests"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+addopts = ["--import-mode=importlib", "--strict-markers"]
+
+[tool.vulture]
+paths = ["src", "tests", "vulture_whitelist.py"]
+ignore_decorators = ["@server.tool", "@pytest.fixture"]
+ignore_names = ["model_config", "pytestmark"]
+min_confidence = 60
