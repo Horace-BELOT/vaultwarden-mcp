@@ -28,8 +28,8 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--idle-lock-minutes",
         type=int,
-        default=60,
-        help="lock the vault after this many idle minutes (default: 60)",
+        default=720,
+        help="lock the vault after this many idle minutes (default: 720, i.e. 12 h)",
     )
     parser.add_argument(
         "--cache-minutes",

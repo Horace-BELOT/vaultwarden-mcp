@@ -29,7 +29,7 @@ Claude Code ──get_secret_to_file(id, "password", "~/proj/.env", env_key="STR
 2. **Déverrouillage (une fois par session)** : au premier appel, le serveur ouvre une **fenêtre
    native** où tu tapes ton mot de passe maître. Il va directement au CLI Bitwarden, pas à
    l'agent. La clé de session reste dans la mémoire du serveur ; elle est oubliée après
-   60 min d'inactivité et à l'arrêt du serveur.
+   12 h d'inactivité et à l'arrêt du serveur.
 3. **Recherche** (`search_secrets`) : par nom, identifiant, URL, dossier, collection, nom de
    champ personnalisé et contenu des notes. Ne renvoie que des métadonnées, plus la liste des
    champs récupérables (`available_fields`).
@@ -222,7 +222,7 @@ Champs récupérables (`field`) : `username`, `password`, `totp` (le code couran
 | Option | Défaut | Effet |
 | --- | --- | --- |
 | `--bw <chemin>` | `bw` du PATH | chemin du CLI Bitwarden |
-| `--idle-lock-minutes <n>` | 60 | reverrouille après n minutes sans appel |
+| `--idle-lock-minutes <n>` | 720 (12 h) | reverrouille après n minutes sans appel |
 | `--cache-minutes <n>` | 5 | durée de réutilisation de la liste des éléments |
 | `--no-search-notes` | recherche dans les notes | n'y cherche plus (voir l'oracle plus haut) |
 | `--password-command "<cmd>"` | fenêtre native | commande qui imprime le mot de passe maître |
