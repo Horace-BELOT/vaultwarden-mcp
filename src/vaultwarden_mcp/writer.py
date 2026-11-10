@@ -9,7 +9,7 @@ import os
 import re
 import subprocess
 import tempfile
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
@@ -125,14 +125,25 @@ def _atomic_write(path: Path, content: str, mode: int) -> None:
         raise
 
 
+def git_env(env: Mapping[str, str]) -> dict[str, str]:
+    """`env` without GIT_* variables.
+
+    Git hooks export GIT_DIR, GIT_INDEX_FILE...: inherited, they point every git command
+    at the hook's repository instead of the folder given with -C.
+    """
+    return {k: v for k, v in env.items() if not k.startswith("GIT_")}
+
+
 def git_unignored(path: Path) -> bool:
     """True when `path` is inside a git work tree and git does not ignore it."""
     folder = str(path.parent)
+    env = git_env(os.environ)
     try:
         inside = subprocess.run(
             ["git", "-C", folder, "rev-parse", "--is-inside-work-tree"],
             capture_output=True,
             text=True,
+            env=env,
             check=False,
         )
     except FileNotFoundError:  # no git installed: nothing can be committed by accident
@@ -142,6 +153,7 @@ def git_unignored(path: Path) -> bool:
     ignored = subprocess.run(
         ["git", "-C", folder, "check-ignore", "-q", str(path)],
         capture_output=True,
+        env=env,
         check=False,
     )
     return ignored.returncode != 0

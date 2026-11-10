@@ -10,6 +10,7 @@ from vaultwarden_mcp.errors import DestinationError
 from vaultwarden_mcp.writer import (
     Destination,
     dotenv_quote,
+    git_env,
     git_unignored,
     parse_destination,
     write_secret,
@@ -114,8 +115,20 @@ def test_parse_destination_refuses_a_file_git_would_track(tmp_path: Path) -> Non
 def test_git_unignored_tells_tracked_from_ignored_files(tmp_path: Path) -> None:
     repo = tmp_path / "repo"
     repo.mkdir()
-    subprocess.run(["git", "init", "-q", str(repo)], check=True)
+    # Under a git hook GIT_DIR is set: without git_env, this would re-init the hook's repo.
+    subprocess.run(["git", "init", "-q", str(repo)], check=True, env=git_env(os.environ))
     (repo / ".gitignore").write_text(".env\n")
     assert git_unignored(repo / "config.txt")
     assert not git_unignored(repo / ".env")
+    assert not git_unignored(tmp_path / "outside-any-repo.txt")
+
+
+@pytest.mark.skipif(shutil.which("git") is None, reason="git is not installed")
+def test_git_unignored_ignores_an_inherited_git_dir(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    subprocess.run(["git", "init", "-q", str(repo)], check=True, env=git_env(os.environ))
+    monkeypatch.setenv("GIT_DIR", str(repo / ".git"))  # what a git hook exports
     assert not git_unignored(tmp_path / "outside-any-repo.txt")
