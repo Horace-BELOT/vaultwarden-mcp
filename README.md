@@ -1,8 +1,9 @@
 # vaultwarden-mcp
 
 Serveur MCP qui donne à un agent (Claude Code…) un accès **en recherche** à un coffre
-Vaultwarden, et la possibilité d'**écrire un secret dans un fichier** après validation
-humaine, **sans que la valeur du secret passe jamais dans la conversation**.
+Vaultwarden, la possibilité d'**écrire un secret dans un fichier** et, en option, d'**ajouter
+ou de modifier un secret dans le coffre**, chaque fois après validation humaine, **sans que
+la valeur du secret passe jamais dans la conversation**.
 
 - [Comment ça marche](#comment-ça-marche)
 - [Ce qui est garanti, et ce qui ne l'est pas](#ce-qui-est-garanti-et-ce-qui-ne-lest-pas)
@@ -39,9 +40,14 @@ Claude Code ──get_secret_to_file(id, "password", "~/proj/.env", env_key="STR
    (y compris auto et bypass), sans option « ne plus demander ». La valeur est écrite dans un
    fichier (droits `600`) ou dans une clé d'un fichier `.env` ; l'agent ne reçoit que le
    chemin et la longueur.
+5. **Écriture dans le coffre** (`create_secret`, `update_secret`, seulement avec
+   [`--allow-writes`](#écrire-dans-le-coffre)) : même validation à chaque appel. La valeur ne
+   vient jamais de l'agent : elle est générée par le serveur, tapée par toi dans une fenêtre,
+   ou lue dans un fichier écrit par un programme.
 
-Outils exposés : `vault_status`, `search_secrets`, `get_secret_to_file`, `sync_vault`,
-`lock_vault`. Aucun outil n'écrit ni ne supprime dans le coffre.
+Outils exposés : `vault_status`, `search_secrets`, `list_folders_and_collections`,
+`get_secret_to_file`, `sync_vault`, `lock_vault`, et avec `--allow-writes` `create_secret` et
+`update_secret`. Aucun outil ne supprime quoi que ce soit dans le coffre.
 
 ## Ce qui est garanti, et ce qui ne l'est pas
 
@@ -49,12 +55,17 @@ Garanti par le serveur :
 
 - aucune réponse d'outil ne contient de valeur secrète (mot de passe, valeur de champ, note,
   code TOTP) ; c'est vérifié par les tests ;
-- chaque `get_secret_to_file` passe par ta validation dans Claude Code ;
+- chaque `get_secret_to_file`, `create_secret` et `update_secret` passe par ta validation
+  dans Claude Code ;
+- sans `--allow-writes`, aucun outil ne peut modifier le coffre ; avec, rien ne peut y être
+  supprimé, et la valeur écrite ne peut pas venir d'un autre élément du coffre (pas de copie
+  d'un secret vers une collection partagée) ;
 - le mot de passe maître et la clé de session ne passent jamais par l'agent ;
 - un fichier dans un dépôt git **non ignoré** par git est refusé (sauf
   `allow_not_gitignored=true`, visible dans la demande de validation) ;
-- chaque déverrouillage et chaque secret écrit est journalisé (sur stderr, en JSON : élément,
-  champ, destination, raison ; jamais la valeur).
+- chaque déverrouillage, chaque secret écrit dans un fichier et chaque élément créé ou modifié
+  est journalisé (sur stderr, en JSON : élément, champ, destination ou collection, raison ;
+  jamais la valeur).
 
 Pas garanti, à connaître :
 
@@ -187,12 +198,17 @@ Vérifie avec `claude mcp list` (`vault: … ✔ Connected`), puis **ouvre une n
 Claude Code : les serveurs MCP sont chargés au démarrage.
 
 Pour ne pas valider chaque recherche, autorise les outils en lecture dans
-`~/.claude/settings.json`. `get_secret_to_file` restera soumis à validation quoi qu'il arrive :
+`~/.claude/settings.json`. `get_secret_to_file`, `create_secret` et `update_secret` resteront
+soumis à validation quoi qu'il arrive :
 
 ```json
 {
   "permissions": {
-    "allow": ["mcp__vault__search_secrets", "mcp__vault__vault_status"]
+    "allow": [
+      "mcp__vault__search_secrets",
+      "mcp__vault__vault_status",
+      "mcp__vault__list_folders_and_collections"
+    ]
   }
 }
 ```
@@ -203,6 +219,8 @@ Demande simplement à l'agent, par exemple :
 
 - « Qu'est-ce qu'on a dans le coffre pour Stripe ? »
 - « Mets le token GitHub de deploy-bot dans `.env` sous `GITHUB_TOKEN`. »
+- Avec `--allow-writes` : « Crée un mot de passe pour la base de staging, range-le comme les
+  autres accès de ce projet et mets-le dans `.env` sous `DB_PASSWORD`. »
 
 Déroulé :
 
@@ -226,6 +244,47 @@ Champs récupérables (`field`) : `username`, `password`, `totp` (le code couran
 | `--cache-minutes <n>` | 5 | durée de réutilisation de la liste des éléments |
 | `--no-search-notes` | recherche dans les notes | n'y cherche plus (voir l'oracle plus haut) |
 | `--password-command "<cmd>"` | fenêtre native | commande qui imprime le mot de passe maître |
+| `--allow-writes` | désactivé | ajoute `create_secret` et `update_secret` |
+
+### Écrire dans le coffre
+
+Avec `--allow-writes`, l'agent peut créer un élément (`create_secret`) ou remplacer un champ
+d'un élément existant (`update_secret`). Il ne peut rien supprimer.
+
+```sh
+claude mcp add --scope user vault -- uv run --directory ~/tools/vaultwarden-mcp vaultwarden-mcp \
+  --allow-writes
+```
+
+D'où vient la valeur (`source`) :
+
+| `source` | La valeur… | Pour |
+| --- | --- | --- |
+| `generate` | est tirée au hasard par le serveur (`length` 12 à 128, 32 par défaut ; `special_chars`) | nouveau compte, rotation |
+| `dialog` | est tapée ou collée par toi dans une fenêtre (une ligne) | un secret que tu as sous la main |
+| `file` | est lue dans `source_path` (64 Kio max, un saut de ligne final retiré ; plusieurs lignes seulement pour `notes`) | un token imprimé par une CLI et redirigé dans un fichier |
+
+Avec `file`, l'agent a pu voir la valeur s'il a lui-même produit le fichier : préfère
+`generate` ou `dialog` quand c'est possible.
+
+Où elle va (`field`) : `password` (éléments de type login), `notes`, ou `field:<nom>` (champ
+personnalisé, créé **masqué** s'il n'existe pas). En plus du coffre, elle peut être écrite
+dans un fichier ou une clé de `.env` (`destination`, `env_key`), comme avec
+`get_secret_to_file`.
+
+- **Collection** : `create_secret` prend des noms de collection (casse et accents ignorés).
+  L'agent les choisit d'après les éléments voisins (`search_secrets` montre leurs
+  collections) ou dans `list_folders_and_collections`. Un nom inconnu ou ambigu est refusé,
+  avec la liste des collections disponibles. Sans collection, l'élément va dans ton coffre
+  personnel. Il faut avoir le droit d'écrire dans la collection côté Vaultwarden, sinon
+  `bw` refuse.
+- **Doublons** : un élément du même nom au même endroit est refusé ; l'agent doit le
+  modifier avec `update_secret` (ou passer `allow_duplicate_name=true`).
+- **Historique** : Bitwarden garde les 5 dernières valeurs du mot de passe et des champs
+  masqués dans l'historique de l'élément. Pas celles des notes ni des champs texte :
+  `update_secret` le signale dans sa réponse (`previous_value_in_history`).
+- `update_secret` ne change que le coffre, pas le service : changer le mot de passe dans
+  Vaultwarden ne le change pas sur le serveur concerné.
 
 ### Mot de passe maître sans fenêtre
 
@@ -283,6 +342,7 @@ uv run pre-commit install          # hooks pre-commit, commit-msg et pre-push
 - **Dépendances** : `uv add <paquet>` (ou `uv add --dev`) ; `uv.lock` est commité.
 - **Structure** : `bitwarden.py` (modèles du JSON de `bw` + adaptateur subprocess), `vault.py`
   (session, cache, verrouillage), `catalog.py` (recherche et résumés, fonctions pures),
-  `writer.py` (fichiers et `.env`), `prompts.py` (fenêtres par OS), `server.py` (outils MCP),
+  `editor.py` (éléments à créer ou modifier, origine des valeurs), `writer.py` (fichiers et
+  `.env`), `prompts.py` (fenêtres par OS), `server.py` (outils MCP),
   `__main__.py` (assemblage). Les tests passent des faux en mémoire (`tests/fakes.py`), pas des
   mocks.

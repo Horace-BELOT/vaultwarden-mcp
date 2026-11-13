@@ -3,13 +3,14 @@
 The fake CLI speaks the same JSON as `bw`, so the real pydantic models parse it.
 """
 
+import base64
 import io
 import json
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
-from vaultwarden_mcp.errors import BitwardenCliError, UnlockError
+from vaultwarden_mcp.errors import BitwardenCliError, UnlockError, ValueSourceError
 from vaultwarden_mcp.logs import Log
 from vaultwarden_mcp.vault import Vault, VaultSettings
 
@@ -25,7 +26,15 @@ FOLDERS: list[dict[str, str | None]] = [
     {"id": "f-dev", "name": "Développement"},
     {"id": None, "name": "No Folder"},
 ]
-COLLECTIONS: list[dict[str, str]] = [{"id": "c-infra", "name": "Infra Acme"}]
+COLLECTIONS: list[dict[str, str]] = [
+    {"id": "c-infra", "name": "Infra Acme", "organizationId": "o-acme"},
+    {"id": "c-web", "name": "Web Acme", "organizationId": "o-acme"},
+    {"id": "c-other", "name": "Partner", "organizationId": "o-partner"},
+]
+ORGANIZATIONS: list[dict[str, str]] = [
+    {"id": "o-acme", "name": "Acme"},
+    {"id": "o-partner", "name": "Partner Inc"},
+]
 
 ITEMS: list[dict[str, object]] = [
     {
@@ -74,15 +83,18 @@ class FakeBw:
     """Fake `bw`: one account, one valid master password, one session key."""
 
     status: str = "locked"
-    items: list[dict[str, object]] = field(default_factory=lambda: list(ITEMS))
+    items: list[dict[str, object]] = field(default_factory=lambda: json.loads(json.dumps(ITEMS)))
     calls: list[tuple[str, ...]] = field(default_factory=list)
+    stdins: list[str] = field(default_factory=list)
     _session_valid: bool = False
 
-    def run(  # noqa: PLR0911 -- a fake CLI answers one subcommand per branch
-        self, args: Sequence[str], *, session: str | None = None
+    def run(  # noqa: PLR0911, PLR0912 -- a fake CLI answers one subcommand per branch
+        self, args: Sequence[str], *, session: str | None = None, stdin: str | None = None
     ) -> str:
         """Answer the subcommands the vault uses."""
         self.calls.append(tuple(args))
+        if stdin is not None:
+            self.stdins.append(stdin)
         if args[0] == "status":
             unlocked = self._session_valid and session == SESSION_KEY
             return json.dumps(
@@ -102,6 +114,14 @@ class FakeBw:
                 return json.dumps(FOLDERS)
             case ["list", "collections"]:
                 return json.dumps(COLLECTIONS)
+            case ["list", "organizations"]:
+                return json.dumps(ORGANIZATIONS)
+            case ["create", "item"]:
+                item = {**_decode(stdin), "id": f"i-new-{len(self.items)}"}
+                self.items.append(item)
+                return json.dumps(item)
+            case ["edit", "item", item_id]:
+                return json.dumps(self._edit(item_id, _decode(stdin)))
             case ["get", "item", item_id]:
                 for item in self.items:
                     if item["id"] == item_id:
@@ -116,6 +136,19 @@ class FakeBw:
                 return "Your vault is locked."
         raise AssertionError(f"unexpected bw call: {args}")
 
+    def _edit(self, item_id: str, new: dict[str, object]) -> dict[str, object]:
+        """Replace an item; like `bw`, push a changed password into its history."""
+        for i, old in enumerate(self.items):
+            if old["id"] == item_id:
+                history = list(old.get("passwordHistory") or [])  # type: ignore[call-overload]
+                old_password = (old.get("login") or {}).get("password")  # type: ignore[attr-defined]
+                new_password = (new.get("login") or {}).get("password")  # type: ignore[attr-defined]
+                if old_password and old_password != new_password:
+                    history.insert(0, {"password": old_password, "lastUsedDate": "now"})
+                self.items[i] = {**new, "id": item_id, "passwordHistory": history[:5] or None}
+                return self.items[i]
+        raise BitwardenCliError("edit", "Not found.")
+
     def unlock(self, password: str) -> str:
         """Accept only the fake master password."""
         self.calls.append(("unlock",))
@@ -127,6 +160,27 @@ class FakeBw:
     def count(self, *args: str) -> int:
         """How many times a subcommand was called."""
         return sum(1 for c in self.calls if c[: len(args)] == args)
+
+
+def _decode(stdin: str | None) -> dict[str, object]:
+    assert stdin is not None, "item JSON must come through stdin"
+    data: dict[str, object] = json.loads(base64.b64decode(stdin))
+    return data
+
+
+@dataclass
+class FakeValuePrompt:
+    """Answers the value dialog, or cancels; records the messages shown."""
+
+    answer: str | None = "typed-value-77aa"
+    messages: list[str] = field(default_factory=list)
+
+    def ask_value(self, message: str) -> str:
+        """Record the message and answer."""
+        self.messages.append(message)
+        if self.answer is None:
+            raise ValueSourceError("Value entry cancelled by the user.")
+        return self.answer
 
 
 @dataclass

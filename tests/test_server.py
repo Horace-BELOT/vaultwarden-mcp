@@ -45,6 +45,7 @@ async def test_only_get_secret_to_file_requires_user_interaction() -> None:
         "vault_status",
         "search_secrets",
         "get_secret_to_file",
+        "list_folders_and_collections",
         "sync_vault",
         "lock_vault",
     }

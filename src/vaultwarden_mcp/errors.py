@@ -32,3 +32,11 @@ class FieldNotFoundError(VaultwardenMcpError):
 
 class DestinationError(VaultwardenMcpError):
     """The destination file is refused (relative path, missing folder, tracked by git...)."""
+
+
+class ValueSourceError(VaultwardenMcpError):
+    """The value to store could not be obtained (dialog cancelled, unreadable file...)."""
+
+
+class TargetError(VaultwardenMcpError):
+    """The item to create or edit is refused (unknown collection, duplicate name...)."""

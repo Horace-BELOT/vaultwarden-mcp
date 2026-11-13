@@ -88,7 +88,8 @@ def extract_field(item: BwItem, field: str) -> str:
     return value
 
 
-def _normalize(text: str) -> str:
+def normalize(text: str) -> str:
+    """Lowercase without accents, for matching names typed by the model."""
     decomposed = unicodedata.normalize("NFKD", text)
     return "".join(c for c in decomposed if not unicodedata.combining(c)).casefold()
 
@@ -110,7 +111,7 @@ def _haystack(
     }
     if search_notes:
         parts["notes"] = item.notes or ""
-    return {k: _normalize(v) for k, v in parts.items()}
+    return {k: normalize(v) for k, v in parts.items()}
 
 
 def summarize(
@@ -148,7 +149,7 @@ def search(
     Matching ignores case and accents. Notes are searched (when enabled) but only the
     attribute names that matched are reported, never their content.
     """
-    terms = _normalize(query).split()
+    terms = normalize(query).split()
     found: list[ItemSummary] = []
     for item in items:
         hay = _haystack(item, folders, collections, search_notes=search_notes)
@@ -156,4 +157,4 @@ def search(
             continue
         matched = tuple(k for k, v in hay.items() if any(t in v for t in terms))
         found.append(summarize(item, folders, collections, matched))
-    return sorted(found, key=lambda s: (_normalize(s.name), s.id))
+    return sorted(found, key=lambda s: (normalize(s.name), s.id))

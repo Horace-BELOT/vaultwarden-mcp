@@ -1,9 +1,14 @@
-"""Master password prompts. Each satisfies `vaultwarden_mcp.vault.PasswordPrompt`.
+"""Dialogs that take a secret from the human, outside of the MCP conversation.
 
-The password goes from a native dialog (or a command the user configured) straight to this
-process, then to `bw` through a one-shot environment variable: it never enters the MCP
-conversation. The dialog text is passed through the environment too, so no quoting of the
-account name into AppleScript or PowerShell is needed.
+Master password: each class satisfies `vaultwarden_mcp.vault.PasswordPrompt`. The password
+goes from a native dialog (or a command the user configured) straight to this process, then
+to `bw` through a one-shot environment variable: it never enters the MCP conversation.
+
+Values to store (`create_secret` / `update_secret` with source "dialog"): the native dialogs
+also satisfy `vaultwarden_mcp.editor.ValuePrompt`; the value goes from the dialog to `bw`.
+
+The dialog text and button label are passed through the environment, so no quoting of the
+account or item name into AppleScript or PowerShell is needed.
 """
 
 import os
@@ -11,16 +16,19 @@ import shlex
 import shutil
 import subprocess
 from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 
-from vaultwarden_mcp.errors import UnlockError
+from vaultwarden_mcp.errors import UnlockError, ValueSourceError, VaultwardenMcpError
 
 _TEXT_ENV = "VAULTWARDEN_MCP_PROMPT"
+_BUTTON_ENV = "VAULTWARDEN_MCP_BUTTON"
 _TITLE = "Vaultwarden"
 
 _APPLESCRIPT = """
 set msg to system attribute "VAULTWARDEN_MCP_PROMPT"
+set btn to system attribute "VAULTWARDEN_MCP_BUTTON"
 set answer to display dialog msg default answer "" with hidden answer ¬
-    buttons {"Cancel", "Unlock"} default button "Unlock" cancel button "Cancel" ¬
+    buttons {"Cancel", btn} default button btn cancel button "Cancel" ¬
     with title "Vaultwarden" with icon caution
 return text returned of answer
 """
@@ -37,7 +45,8 @@ $l = New-Object Windows.Forms.Label; $l.Text = $env:VAULTWARDEN_MCP_PROMPT
 $l.SetBounds(12, 10, 400, 60)
 $t = New-Object Windows.Forms.TextBox; $t.UseSystemPasswordChar = $true
 $t.SetBounds(12, 75, 400, 24)
-$ok = New-Object Windows.Forms.Button; $ok.Text = 'Unlock'; $ok.DialogResult = 'OK'
+$ok = New-Object Windows.Forms.Button; $ok.Text = $env:VAULTWARDEN_MCP_BUTTON
+$ok.DialogResult = 'OK'
 $ok.SetBounds(246, 110, 80, 28)
 $no = New-Object Windows.Forms.Button; $no.Text = 'Cancel'; $no.DialogResult = 'Cancel'
 $no.SetBounds(332, 110, 80, 28)
@@ -46,31 +55,50 @@ if ($f.ShowDialog() -eq 'OK') { [Console]::Out.Write($t.Text); exit 0 } else { e
 """
 
 
-def _message(account: str) -> str:
+def _unlock_message(account: str) -> str:
     return (
         f"vaultwarden-mcp wants to unlock the vault of {account or 'this account'}.\n\n"
         "The master password goes to the Bitwarden CLI only, never to the AI assistant."
     )
 
 
-def _run_dialog(command: str | Sequence[str], account: str, env: Mapping[str, str]) -> str:
-    """Run a dialog command; exit 0 + stdout = password, any other exit = cancelled."""
+@dataclass(frozen=True, slots=True)
+class _Ask:
+    """What one dialog asks for, and how its failures are reported."""
+
+    message: str
+    button: str
+    error: type[VaultwardenMcpError]
+    what: str  # "Password", "Value": start of the error messages
+
+
+def _unlock(account: str) -> _Ask:
+    return _Ask(_unlock_message(account), "Unlock", UnlockError, "Password")
+
+
+def _value(message: str) -> _Ask:
+    return _Ask(message, "Save", ValueSourceError, "Value")
+
+
+def _run_dialog(command: str | Sequence[str], ask: _Ask, env: Mapping[str, str]) -> str:
+    """Run a dialog command; exit 0 + stdout = the answer, any other exit = cancelled."""
     proc = subprocess.run(
         command if isinstance(command, str) else list(command),
+        input="",
         capture_output=True,
         text=True,
-        env={**env, _TEXT_ENV: _message(account)},
+        env={**env, _TEXT_ENV: ask.message, _BUTTON_ENV: ask.button},
         check=False,
     )
     if proc.returncode != 0:
         detail = proc.stderr.strip().splitlines()
         if detail and "-128" not in detail[-1]:  # -128 is AppleScript's "user cancelled"
-            raise UnlockError(f"Password dialog failed: {detail[-1]}")
-        raise UnlockError("Unlock cancelled by the user.")
-    password = proc.stdout.removesuffix("\n").removesuffix("\r")
-    if not password:
-        raise UnlockError("Empty master password.")
-    return password
+            raise ask.error(f"{ask.what} dialog failed: {detail[-1]}")
+        raise ask.error(f"{ask.what} entry cancelled by the user.")
+    answer = proc.stdout.removesuffix("\n").removesuffix("\r")
+    if not answer:
+        raise ask.error(f"Empty {ask.what.lower()}.")
+    return answer
 
 
 class MacDialog:
@@ -82,7 +110,14 @@ class MacDialog:
 
     def ask(self, account: str) -> str:
         """Show the dialog and return the typed password."""
-        return _run_dialog(["osascript", "-e", _APPLESCRIPT], account, self._env)
+        return self._show(_unlock(account))
+
+    def ask_value(self, message: str) -> str:
+        """Show the dialog and return the typed or pasted value (one line)."""
+        return self._show(_value(message))
+
+    def _show(self, ask: _Ask) -> str:
+        return _run_dialog(["osascript", "-e", _APPLESCRIPT], ask, self._env)
 
 
 class LinuxDialog:
@@ -94,10 +129,16 @@ class LinuxDialog:
 
     def ask(self, account: str) -> str:
         """Show the dialog and return the typed password."""
+        return self._show(_unlock(account), "use --password-command instead (see README).")
+
+    def ask_value(self, message: str) -> str:
+        """Show the dialog and return the typed or pasted value (one line)."""
+        return self._show(_value(message), 'use source "generate" or "file" instead.')
+
+    def _show(self, ask: _Ask, headless_hint: str) -> str:
         if not (self._env.get("DISPLAY") or self._env.get("WAYLAND_DISPLAY")):
-            raise UnlockError(
-                "No graphical session (DISPLAY/WAYLAND_DISPLAY unset): "
-                "use --password-command instead (see README)."
+            raise ask.error(
+                f"No graphical session (DISPLAY/WAYLAND_DISPLAY unset): {headless_hint}"
             )
         if shutil.which("zenity", path=self._env.get("PATH")):
             argv = [
@@ -108,11 +149,11 @@ class LinuxDialog:
         elif shutil.which("kdialog", path=self._env.get("PATH")):
             argv = ["sh", "-c", f'exec kdialog --title {_TITLE} --password "${_TEXT_ENV}"']
         else:
-            raise UnlockError(
+            raise ask.error(
                 "Neither zenity nor kdialog is installed: install one "
-                "(e.g. `sudo apt install zenity`) or use --password-command."
+                f"(e.g. `sudo apt install zenity`), or {headless_hint}"
             )
-        return _run_dialog(argv, account, self._env)
+        return _run_dialog(argv, ask, self._env)
 
 
 class WindowsDialog:
@@ -124,6 +165,13 @@ class WindowsDialog:
 
     def ask(self, account: str) -> str:
         """Show the dialog and return the typed password."""
+        return self._show(_unlock(account))
+
+    def ask_value(self, message: str) -> str:
+        """Show the dialog and return the typed or pasted value (one line)."""
+        return self._show(_value(message))
+
+    def _show(self, ask: _Ask) -> str:
         argv = [
             "powershell.exe",
             "-NoProfile",
@@ -132,7 +180,7 @@ class WindowsDialog:
             "-Command",
             _POWERSHELL,
         ]
-        return _run_dialog(argv, account, self._env)
+        return _run_dialog(argv, ask, self._env)
 
 
 class CommandPrompt:
@@ -156,7 +204,7 @@ class CommandPrompt:
         if not self._command:
             raise UnlockError("--password-command is empty.")
         try:
-            return _run_dialog(self._command, account, self._env)
+            return _run_dialog(self._command, _unlock(account), self._env)
         except FileNotFoundError as e:
             raise UnlockError(f"--password-command not found: {self._command}") from e
 

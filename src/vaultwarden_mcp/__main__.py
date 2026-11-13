@@ -19,8 +19,9 @@ from vaultwarden_mcp.vault import Vault, VaultSettings
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="vaultwarden-mcp",
-        description="MCP server: search a Vaultwarden vault, write secrets to files with "
-        "human approval, never return secret values to the model.",
+        description="MCP server: search a Vaultwarden vault, write secrets to files (and, "
+        "with --allow-writes, store new ones) with human approval, never return secret "
+        "values to the model.",
     )
     parser.add_argument(
         "--bw", help="path to the Bitwarden CLI (default: `bw` found on PATH)", default=None
@@ -41,6 +42,11 @@ def _parser() -> argparse.ArgumentParser:
         "--no-search-notes",
         action="store_true",
         help="do not search note content (by default notes are searched, never returned)",
+    )
+    parser.add_argument(
+        "--allow-writes",
+        action="store_true",
+        help="add create_secret and update_secret (off by default; nothing is ever deleted)",
     )
     parser.add_argument(
         "--password-command",
@@ -88,8 +94,16 @@ def main(
         log=log,
         search_notes=not args.no_search_notes,
         idle_lock_minutes=args.idle_lock_minutes,
+        allow_writes=args.allow_writes,
+        # Values to store are always typed in a native window, even with --password-command.
+        value_prompt=native_prompt(sys.platform, env),
     )
-    log.event("startup.ready", bw=str(bw_path), prompt=type(prompt).__name__)
+    log.event(
+        "startup.ready",
+        bw=str(bw_path),
+        prompt=type(prompt).__name__,
+        allow_writes=args.allow_writes,
+    )
     server.run("stdio")
     return 0
 

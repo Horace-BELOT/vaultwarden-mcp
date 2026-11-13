@@ -5,7 +5,7 @@ import sys
 
 import pytest
 
-from vaultwarden_mcp.errors import UnlockError
+from vaultwarden_mcp.errors import UnlockError, ValueSourceError
 from vaultwarden_mcp.prompts import (
     CommandPrompt,
     LinuxDialog,
@@ -53,3 +53,8 @@ def test_linux_dialog_without_a_graphical_session_points_to_password_command() -
 )
 def test_native_prompt_picks_the_dialog_of_the_platform(platform: str, expected: type) -> None:
     assert isinstance(native_prompt(platform, {}), expected)
+
+
+def test_value_dialog_without_a_graphical_session_is_a_value_source_error() -> None:
+    with pytest.raises(ValueSourceError, match="generate"):
+        LinuxDialog({"PATH": "/usr/bin"}).ask_value("store it")

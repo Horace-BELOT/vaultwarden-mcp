@@ -69,6 +69,10 @@ class BwItem(_Model):
     card: Mapping[str, str | None] | None = None
     ssh_key: Mapping[str, str | None] | None = Field(default=None, alias="sshKey")
     revision_date: str | None = Field(default=None, alias="revisionDate")
+    # Previous passwords and hidden-field values: compared after an edit, never returned.
+    password_history: tuple[Mapping[str, str | None], ...] | None = Field(
+        default=None, alias="passwordHistory"
+    )
 
 
 class BwNamed(_Model):
@@ -78,8 +82,17 @@ class BwNamed(_Model):
     name: str
 
 
+class BwCollection(_Model):
+    """A collection of `bw list collections`; it always belongs to an organization."""
+
+    id: str
+    name: str
+    organization_id: str = Field(alias="organizationId")
+
+
 ITEMS = TypeAdapter(tuple[BwItem, ...])
 NAMED = TypeAdapter(tuple[BwNamed, ...])
+COLLECTIONS = TypeAdapter(tuple[BwCollection, ...])
 
 
 def find_bw(explicit: str | None, path: str | None) -> Path | None:
@@ -105,26 +118,34 @@ class BitwardenCli:
         env["BW_NOINTERACTION"] = "true"
         self._env = env
 
-    def run(self, args: Sequence[str], *, session: str | None = None) -> str:
-        """Run `bw <args>` and return its stdout."""
+    def run(
+        self, args: Sequence[str], *, session: str | None = None, stdin: str | None = None
+    ) -> str:
+        """Run `bw <args>` and return its stdout.
+
+        `stdin` carries encoded item JSON to `bw create` / `bw edit`: on the command line it
+        would be visible to every process of the machine (`ps`).
+        """
         env = dict(self._env)
         if session:
             env["BW_SESSION"] = session
-        return self._exec(args, env)
+        return self._exec(args, env, stdin)
 
     def unlock(self, password: str) -> str:
         """Unlock with the master password (passed by environment, never argv) -> session key."""
         env = dict(self._env)
         env[_PASSWORD_ENV] = password
-        return self._exec(["unlock", "--raw", "--passwordenv", _PASSWORD_ENV], env).strip()
+        return self._exec(["unlock", "--raw", "--passwordenv", _PASSWORD_ENV], env, None).strip()
 
-    def _exec(self, args: Sequence[str], env: Mapping[str, str]) -> str:
+    def _exec(self, args: Sequence[str], env: Mapping[str, str], stdin: str | None) -> str:
         command = args[0] if args else ""
         if not self._executable.exists():
             raise BitwardenCliError(command, f"{self._executable} not found")
         try:
             proc = subprocess.run(
                 [str(self._executable), *args],
+                # Never inherit our own stdin: it is the MCP protocol stream.
+                input="" if stdin is None else stdin,
                 capture_output=True,
                 text=True,
                 env=env,

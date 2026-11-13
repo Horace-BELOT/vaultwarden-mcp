@@ -4,11 +4,13 @@ The session key never leaves this object: it is not written to disk, not exporte
 environment of other processes, and not returned by any tool.
 """
 
+import base64
+import json
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
-from typing import Protocol
+from typing import Any, Protocol
 
-from vaultwarden_mcp.bitwarden import ITEMS, NAMED, BwItem, BwStatus
+from vaultwarden_mcp.bitwarden import COLLECTIONS, ITEMS, NAMED, BwItem, BwStatus
 from vaultwarden_mcp.errors import BitwardenCliError, NotLoggedInError, UnlockError
 from vaultwarden_mcp.logs import Log
 
@@ -16,8 +18,10 @@ from vaultwarden_mcp.logs import Log
 class BwRunner(Protocol):
     """What the vault needs from the Bitwarden CLI."""
 
-    def run(self, args: Sequence[str], *, session: str | None = None) -> str:
-        """Run `bw <args>` and return stdout."""
+    def run(
+        self, args: Sequence[str], *, session: str | None = None, stdin: str | None = None
+    ) -> str:
+        """Run `bw <args>` (optionally feeding `stdin`) and return stdout."""
         ...
 
     def unlock(self, password: str) -> str:
@@ -48,6 +52,8 @@ class Snapshot:
     items: tuple[BwItem, ...]
     folders: Mapping[str, str]
     collections: Mapping[str, str]
+    collection_orgs: Mapping[str, str]
+    organizations: Mapping[str, str]
 
 
 class Vault:
@@ -94,6 +100,26 @@ class Vault:
         """One item, fetched fresh from the CLI by its exact id."""
         session = self._session_or_unlock()
         return BwItem.model_validate_json(self._bw.run(["get", "item", item_id], session=session))
+
+    def item_json(self, item_id: str) -> dict[str, Any]:
+        """One item as the raw JSON of `bw get item`, every field kept, for `edit_item`."""
+        session = self._session_or_unlock()
+        data: dict[str, Any] = json.loads(self._bw.run(["get", "item", item_id], session=session))
+        return data
+
+    def create_item(self, data: Mapping[str, Any]) -> BwItem:
+        """`bw create item`; the encoded JSON goes through stdin, never argv."""
+        session = self._session_or_unlock()
+        out = self._bw.run(["create", "item"], session=session, stdin=_encode(data))
+        self._snapshot = None
+        return BwItem.model_validate_json(out)
+
+    def edit_item(self, item_id: str, data: Mapping[str, Any]) -> BwItem:
+        """`bw edit item`: replaces the item with `data` (a modified `item_json`)."""
+        session = self._session_or_unlock()
+        out = self._bw.run(["edit", "item", item_id], session=session, stdin=_encode(data))
+        self._snapshot = None
+        return BwItem.model_validate_json(out)
 
     def totp(self, item_id: str) -> str:
         """Current TOTP code of an item."""
@@ -150,9 +176,19 @@ class Vault:
     def _load(self, session: str) -> Snapshot:
         items = ITEMS.validate_json(self._bw.run(["list", "items"], session=session))
         folders = NAMED.validate_json(self._bw.run(["list", "folders"], session=session))
-        collections = NAMED.validate_json(self._bw.run(["list", "collections"], session=session))
+        collections = COLLECTIONS.validate_json(
+            self._bw.run(["list", "collections"], session=session)
+        )
+        orgs = NAMED.validate_json(self._bw.run(["list", "organizations"], session=session))
         return Snapshot(
             items=items,
             folders={f.id: f.name for f in folders if f.id},
-            collections={c.id: c.name for c in collections if c.id},
+            collections={c.id: c.name for c in collections},
+            collection_orgs={c.id: c.organization_id for c in collections},
+            organizations={o.id: o.name for o in orgs if o.id},
         )
+
+
+def _encode(data: Mapping[str, Any]) -> str:
+    """What `bw encode` does: base64 of the JSON."""
+    return base64.b64encode(json.dumps(data).encode()).decode()
