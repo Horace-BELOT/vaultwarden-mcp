@@ -172,7 +172,7 @@ La fenêtre de déverrouillage est une fenêtre Windows Forms lancée par Window
 
 | | Tests automatiques (avec le vrai `bw`) | Essai réel de bout en bout |
 | --- | --- | --- |
-| macOS | ✅ en local ; CI `macos-latest` | ✅ fenêtre, déverrouillage, recherche dans un vrai coffre |
+| macOS | ✅ en local ; CI `macos-latest` | ✅ fenêtre, déverrouillage, recherche dans un vrai coffre ; création et modification dans le coffre personnel (collection d'organisation pas encore essayée) |
 | Linux | CI `ubuntu-latest` | ❌ pas encore : fenêtre zenity/kdialog à confirmer |
 | Windows | CI `windows-latest` | ❌ pas encore : fenêtre PowerShell à confirmer |
 
